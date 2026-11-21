@@ -19,6 +19,7 @@ import {
 import { type ChatModelId, chatSessionManager } from './server/chatManager';
 import { attachFixItProxy } from './server/fixitProxy';
 import { attachLiveWebSocketServer } from './server/liveBridge';
+import { attachRestoOpsProxy } from './server/opsProxy';
 import { voicePizzaStore } from './server/stateStore';
 
 const VALID_ARCHITECTURES = new Set<VoiceArchitecture>(['cascaded', 'gemini-live']);
@@ -28,6 +29,7 @@ const VALID_STATUSES = new Set<OrderStatus>(['incoming', 'oven', 'ready', 'paid'
 async function bootstrap() {
   const app = express();
   attachFixItProxy(app);
+  attachRestoOpsProxy(app);
   app.use(express.json({ limit: '25mb' }));
 
   // Health & State

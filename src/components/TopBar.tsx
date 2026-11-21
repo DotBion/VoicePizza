@@ -1,6 +1,6 @@
 import type { SessionState } from '../types/voicepizza';
 
-export type ActiveView = 'station' | 'orders' | 'stress' | 'menu' | 'assistant' | 'fixit';
+export type ActiveView = 'station' | 'orders' | 'stress' | 'menu' | 'assistant' | 'fixit' | 'floor';
 
 interface TopBarProps {
   activeView: ActiveView;
@@ -18,6 +18,7 @@ const NAV_ITEMS: Array<{ id: ActiveView; label: string }> = [
   { id: 'menu', label: 'Menu' },
   { id: 'assistant', label: 'Assistant' },
   { id: 'fixit', label: 'Fix-It Cam' },
+  { id: 'floor', label: 'Floor Monitor' },
 ];
 
 export function TopBar({
