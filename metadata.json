@@ -1,0 +1,11 @@
+{
+  "name": "VoicePizza",
+  "description": "Multilingual live voice and counter order agent for busy pizzerias, built with Gemini 4 Hydrogen, Gemini 4 Neon, Gemini Decisions API, and Gemini Live.",
+  "requestFramePermissions": [
+    "microphone",
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
