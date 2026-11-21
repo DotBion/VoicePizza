@@ -17,6 +17,7 @@ import {
   transcribeRawAudio,
 } from './server/cascadedPipeline';
 import { type ChatModelId, chatSessionManager } from './server/chatManager';
+import { attachFixItProxy } from './server/fixitProxy';
 import { attachLiveWebSocketServer } from './server/liveBridge';
 import { voicePizzaStore } from './server/stateStore';
 
@@ -26,6 +27,7 @@ const VALID_STATUSES = new Set<OrderStatus>(['incoming', 'oven', 'ready', 'paid'
 
 async function bootstrap() {
   const app = express();
+  attachFixItProxy(app);
   app.use(express.json({ limit: '25mb' }));
 
   // Health & State
