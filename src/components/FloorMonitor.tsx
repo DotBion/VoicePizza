@@ -185,6 +185,7 @@ export function FloorMonitor() {
   const advancingRef = useRef(false);
   const pendingRef = useRef<{ at: number; final: boolean } | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const viewedRunRef = useRef<string | null>(null);
 
   const [backendOk, setBackendOk] = useState<boolean | null>(null);
   const [config, setConfig] = useState<OpsConfig | null>(null);
@@ -201,7 +202,12 @@ export function FloorMonitor() {
   const [feedDropped, setFeedDropped] = useState(false);
   const [aspect, setAspect] = useState(16 / 9);
 
-  const realSources = useMemo(() => sources.filter((s) => s.kind !== 'synthetic' && s.kind !== 'camera'), [sources]);
+  // Sample café footage always first, then the most recent uploads.
+  const realSources = useMemo(() => {
+    const list = sources.filter((s) => s.kind !== 'synthetic' && s.kind !== 'camera');
+    const demo = list.filter((s) => s.id === config?.demo_id);
+    return [...demo, ...list.filter((s) => s.id !== config?.demo_id)];
+  }, [sources, config]);
 
   /* ---------- bootstrap + timeline polling ---------- */
   const loadTimeline = useCallback(() => {
@@ -264,6 +270,7 @@ export function FloorMonitor() {
 
   useEffect(
     () => () => {
+      viewedRunRef.current = null;
       feedRef.current?.close();
       stopRun();
       closeCamera();
@@ -271,32 +278,104 @@ export function FloorMonitor() {
     [stopRun, closeCamera],
   );
 
-  function attach(next: OpsRun) {
+  const lastIdRef = useRef(0);
+  const pollTimerRef = useRef<number | null>(null);
+  const watchdogRef = useRef<number | null>(null);
+
+  const stopFeeds = useCallback(() => {
     feedRef.current?.close();
+    feedRef.current = null;
+    if (pollTimerRef.current) window.clearTimeout(pollTimerRef.current);
+    if (watchdogRef.current) window.clearTimeout(watchdogRef.current);
+    pollTimerRef.current = null;
+    watchdogRef.current = null;
+  }, []);
+
+  useEffect(() => stopFeeds, [stopFeeds]);
+
+  function ingest(update: RunEvent) {
+    if (!update || typeof update.id !== 'number' || update.id <= lastIdRef.current) return;
+    lastIdRef.current = update.id;
+    setEvents((prev) => (prev.length && prev[prev.length - 1].id >= update.id ? prev : [...prev.slice(-599), update]));
+    if (update.type === 'run_status') {
+      statusRef.current = update.data.status;
+      setStatus(update.data.status);
+      if (update.data.status !== 'running') {
+        loadTimeline();
+        if (update.data.status === 'blocked' || update.data.status === 'failed') {
+          videoRef.current?.pause();
+          closeCamera();
+        }
+      }
+    }
+  }
+
+  /** Polling fallback for hosts whose proxy buffers or drops Server-Sent Events. */
+  function startPolling(runId: string) {
+    feedRef.current?.close();
+    feedRef.current = null;
+    if (watchdogRef.current) window.clearTimeout(watchdogRef.current);
+    if (pollTimerRef.current) return;
+    setFeedDropped(false);
+    let finalPollDone = false;
+    const tick = async () => {
+      pollTimerRef.current = null;
+      if (runRef.current?.id !== runId && viewedRunRef.current !== runId) return;
+      try {
+        const r = await fetch(`/api/ops/runs/${runId}/poll?after=${lastIdRef.current}`, { cache: 'no-store' });
+        if (r.ok) {
+          const body = (await r.json()) as { events: RunEvent[] };
+          body.events.forEach(ingest);
+          setFeedDropped(false);
+        } else {
+          setFeedDropped(true);
+        }
+      } catch {
+        setFeedDropped(true);
+      }
+      if (viewedRunRef.current !== runId) return;
+      if (statusRef.current !== 'running') {
+        if (finalPollDone) return;
+        finalPollDone = true;
+      }
+      pollTimerRef.current = window.setTimeout(tick, 1500);
+    };
+    pollTimerRef.current = window.setTimeout(tick, 0);
+  }
+
+  function attach(next: OpsRun) {
+    stopFeeds();
+    lastIdRef.current = 0;
+    viewedRunRef.current = next.id;
     setEvents([]);
     setFeedDropped(false);
     setRun(next);
     setStatus(next.status);
     runRef.current = next;
     statusRef.current = next.status;
+    const forcePoll =
+      typeof window !== 'undefined' &&
+      (new URLSearchParams(window.location.search).has('nosse') || typeof EventSource === 'undefined');
+    if (forcePoll) {
+      startPolling(next.id);
+      return;
+    }
     const feed = new EventSource(`/api/ops/runs/${next.id}/events`);
     feedRef.current = feed;
+    // If nothing arrives within 4 s (buffering proxy), switch to polling.
+    watchdogRef.current = window.setTimeout(() => {
+      if (lastIdRef.current === 0 && viewedRunRef.current === next.id) startPolling(next.id);
+    }, 4000);
     feed.onopen = () => setFeedDropped(false);
-    feed.onerror = () => setFeedDropped(true);
+    feed.onerror = () => {
+      if (feedRef.current === feed && viewedRunRef.current === next.id) startPolling(next.id);
+    };
     feed.onmessage = (message) => {
       if (feedRef.current !== feed) return;
-      const update = JSON.parse(message.data) as RunEvent;
-      setEvents((prev) => (prev.length && prev[prev.length - 1].id >= update.id ? prev : [...prev.slice(-599), update]));
-      if (update.type === 'run_status') {
-        statusRef.current = update.data.status;
-        setStatus(update.data.status);
-        if (update.data.status !== 'running') {
-          loadTimeline();
-          if (update.data.status === 'blocked' || update.data.status === 'failed') {
-            videoRef.current?.pause();
-            closeCamera();
-          }
-        }
+      try {
+        ingest(JSON.parse(message.data) as RunEvent);
+      } catch {
+        /* ignore malformed frame */
       }
     };
   }
@@ -445,7 +524,8 @@ export function FloorMonitor() {
   }
 
   function chooseSource(next: OpsSource) {
-    feedRef.current?.close();
+    stopFeeds();
+    viewedRunRef.current = null;
     stopRun();
     closeCamera();
     setCameraMode(false);
