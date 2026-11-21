@@ -200,9 +200,9 @@ Default port (`http://localhost:3000`):
 npm run dev
 ```
 
-Or run on port `3004` (`http://localhost:3004`):
+Or run on port `3001` (`http://localhost:3001`):
 ```bash
-PORT=3004 npm run dev
+PORT=3001 npm run dev
 ```
 
 ### 4. Run Tests, Type-Check & Production Build
