@@ -299,7 +299,7 @@ export function StationWorkspace({
     }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 640, height: 360 },
+        video: { facingMode: { ideal: 'environment' }, width: 640, height: 360 },
       });
       cameraStreamRef.current = stream;
       if (videoRef.current) {
