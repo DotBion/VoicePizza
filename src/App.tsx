@@ -3,6 +3,7 @@ import { ChatAssistant } from './components/ChatAssistant';
 import { MenuCatalog } from './components/MenuCatalog';
 import { OrdersBoard } from './components/OrdersBoard';
 import { StationWorkspace } from './components/StationWorkspace';
+import { FixItCam } from './components/FixItCam';
 import { StressLab } from './components/StressLab';
 import { type ActiveView, TopBar } from './components/TopBar';
 import {
@@ -443,6 +444,8 @@ export default function App() {
         )}
 
         {activeView === 'assistant' && <ChatAssistant />}
+
+        {activeView === 'fixit' && <FixItCam />}
       </main>
 
       <footer className="border-t border-[#E5E0D8] bg-[#F8F7F4] py-4">
