@@ -17,6 +17,7 @@ import {
   transcribeRawAudio,
 } from './server/cascadedPipeline';
 import { type ChatModelId, chatSessionManager } from './server/chatManager';
+import { recordCase, statusForError } from './server/caseRecorder';
 import { attachFixItProxy } from './server/fixitProxy';
 import { attachLiveWebSocketServer } from './server/liveBridge';
 import { attachRestoOpsProxy } from './server/opsProxy';
@@ -243,11 +244,29 @@ async function bootstrap() {
 
   // Element 119 Stress Test ("Where It Breaks")
   app.post('/api/stress/run', async (req, res) => {
-    const { scenarioId = 'p2-counter-6lang', level = 1, audioBase64, audioMimeType } = req.body as {
+    const {
+      scenarioId = 'p2-counter-6lang',
+      level = 1,
+      audioBase64,
+      audioMimeType,
+      audioLabel,
+      replayOf,
+    } = req.body as {
       scenarioId?: string;
       level?: 1 | 2 | 3;
       audioBase64?: string;
       audioMimeType?: string;
+      audioLabel?: string;
+      replayOf?: string;
+    };
+    const startedMs = Date.now();
+    const scenario = CHAOS_SCENARIOS.find((s) => s.id === scenarioId);
+    const caseInput = {
+      scenario_id: scenarioId,
+      scenario: scenario?.title ?? scenarioId,
+      level,
+      audio: audioLabel ? String(audioLabel).slice(0, 120) : audioBase64 ? 'custom upload' : 'built-in scenario',
+      replayable: !audioBase64 || audioLabel === 'Gemini TTS mix',
     };
     if (![1, 2, 3].includes(level)) {
       res.status(400).json({ error: 'Stress level must be 1, 2, or 3.' });
@@ -261,9 +280,45 @@ async function bootstrap() {
         audioMimeType,
       });
       res.json({ result });
+      const gap = Math.abs(result.orchestratedRecall - result.baselineRecall);
+      void recordCase({
+        source: 'stress',
+        area: 'front-of-house',
+        status: result.status === 'broke' ? 'failed' : gap >= 0.34 ? 'disagreement' : 'ok',
+        title: `${result.label} · ${result.concurrentSpeakers} speakers`,
+        input: caseInput,
+        models: {
+          [result.baselineModel]: {
+            role: 'single-model baseline',
+            recall: result.baselineRecall,
+            latency_ms: result.baselineLatencyMs,
+            note: result.baselineErrorNote,
+          },
+          [result.orchestratedModels.join(' + ')]: {
+            role: 'orchestrated stack',
+            recall: result.orchestratedRecall,
+            decisions_confidence: result.decisionTriageConfidence,
+            latency_ms: result.orchestratedLatencyMs,
+            status: result.status,
+          },
+        },
+        latency_ms: result.orchestratedLatencyMs,
+        error: result.status === 'passed' ? null : result.baselineErrorNote,
+        replay_of: typeof replayOf === 'string' ? replayOf.slice(0, 100) : null,
+      });
     } catch (err) {
-      res.status(500).json({
-        error: err instanceof Error ? err.message : 'Stress benchmark failed',
+      const message = err instanceof Error ? err.message : 'Stress benchmark failed';
+      res.status(500).json({ error: message });
+      void recordCase({
+        source: 'stress',
+        area: 'front-of-house',
+        status: statusForError(message),
+        title: `Level ${level} · ${scenario?.title ?? scenarioId}`,
+        input: caseInput,
+        models: {},
+        latency_ms: Date.now() - startedMs,
+        error: message,
+        replay_of: typeof replayOf === 'string' ? replayOf.slice(0, 100) : null,
       });
     }
   });

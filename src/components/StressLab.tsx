@@ -2,6 +2,7 @@ import { Play, Upload } from 'lucide-react';
 import { useState } from 'react';
 import type { StressLevelResult } from '../types/voicepizza';
 import { mixSynthesizedTracksTo16k } from '../utils/audioEngine';
+import { PastCasesAndAnalysis } from './StressLabCases';
 
 interface StressLabProps {
   onStressCompleted?: () => void;
@@ -17,13 +18,19 @@ export function StressLab({ onStressCompleted }: StressLabProps) {
     base64: string;
     mimeType: string;
   } | null>(null);
+  const [casesRefresh, setCasesRefresh] = useState(0);
 
-  async function runLevel(level: 1 | 2 | 3) {
+  async function runLevel(level: 1 | 2 | 3, replayOf?: string) {
     setRunningLevel(level);
     setErrorMsg(null);
+    const startedMs = Date.now();
+    let reachedServer = false;
+    // A replay re-runs the stored scenario, never a custom upload (uploads are not kept).
+    const custom = replayOf ? null : customAudioPayload;
     try {
-      let audioBase64 = customAudioPayload?.base64;
-      let audioMimeType = customAudioPayload?.mimeType;
+      let audioBase64 = custom?.base64;
+      let audioMimeType = custom?.mimeType;
+      let audioLabel = custom ? customAudioName || 'custom upload' : undefined;
 
       if (!audioBase64 && useRealMixedAudio) {
         const synthRes = await fetch('/api/chaos/synthesize', {
@@ -39,8 +46,10 @@ export function StressLab({ onStressCompleted }: StressLabProps) {
         const mixed = await mixSynthesizedTracksTo16k(synthData.tracks.slice(0, sliceCount));
         audioBase64 = mixed.wavBase64;
         audioMimeType = 'audio/wav';
+        audioLabel = 'Gemini TTS mix';
       }
 
+      reachedServer = true;
       const res = await fetch('/api/stress/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -49,6 +58,8 @@ export function StressLab({ onStressCompleted }: StressLabProps) {
           level,
           audioBase64,
           audioMimeType,
+          audioLabel,
+          replayOf,
         }),
       });
       const data = await res.json();
@@ -63,9 +74,29 @@ export function StressLab({ onStressCompleted }: StressLabProps) {
 
       onStressCompleted?.();
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Stress benchmark error');
+      const message = err instanceof Error ? err.message : 'Stress benchmark error';
+      setErrorMsg(message);
+      if (!reachedServer) {
+        // Failures before /api/stress/run (e.g. TTS synthesis) are recorded here; the server records the rest.
+        await fetch('/api/ops/cases', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            source: 'stress',
+            area: 'front-of-house',
+            status: /time(d)?\s?out|deadline/i.test(message) ? 'timeout' : 'failed',
+            title: `Level ${level} · audio synthesis`,
+            input: { scenario_id: 'p2-counter-6lang', level, audio: 'Gemini TTS mix', replayable: true },
+            models: {},
+            latency_ms: Date.now() - startedMs,
+            error: message.slice(0, 2000),
+            replay_of: replayOf ?? null,
+          }),
+        }).catch(() => undefined);
+      }
     } finally {
       setRunningLevel(null);
+      setCasesRefresh((n) => n + 1);
     }
   }
 
@@ -227,6 +258,13 @@ export function StressLab({ onStressCompleted }: StressLabProps) {
           </div>
         )}
       </section>
+
+      {/* Past cases (Fix-It, Floor Monitor, Stress Lab) + nightly Gemini 4 Argon review */}
+      <PastCasesAndAnalysis
+        refreshKey={casesRefresh}
+        stressBusy={runningLevel !== null}
+        onReplayStress={(level, replayOf) => runLevel(level, replayOf)}
+      />
 
       {/* Honest Failure Analysis (Element 119 Questions) */}
       <section className="grid grid-cols-1 md:grid-cols-3 gap-6">

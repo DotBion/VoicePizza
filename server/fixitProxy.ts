@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from 'express';
 import { Readable } from 'node:stream';
+import { recordFixItCase } from './caseRecorder';
 
 /**
  * Same-origin proxy for the Fix-It Cam backend (FastAPI, see DotBion/fixitcam).
@@ -36,6 +37,39 @@ export function attachFixItProxy(app: Express) {
       if (!res.writableEnded) controller.abort();
     });
 
+    // Every diagnosis becomes a Stress Lab "past case" (recorded on the ops backend, no media kept).
+    const isAnalyze = endpoint === 'analyze';
+    const startedMs = Date.now();
+    const clipHeader = req.headers['x-fixit-clip'];
+    let clip = 'clip';
+    try {
+      clip = typeof clipHeader === 'string' && clipHeader ? decodeURIComponent(clipHeader).slice(0, 120) : 'clip';
+    } catch {
+      /* keep default */
+    }
+    const bytes = Number(req.headers['content-length']) || null;
+    const seen: Array<Record<string, unknown>> = [];
+    let lineBuffer = '';
+    const collect = (chunk: string) => {
+      lineBuffer += chunk;
+      let idx: number;
+      while ((idx = lineBuffer.indexOf('\n')) >= 0) {
+        const line = lineBuffer.slice(0, idx).trim();
+        lineBuffer = lineBuffer.slice(idx + 1);
+        if (!line) continue;
+        try {
+          seen.push(JSON.parse(line));
+        } catch {
+          /* not an event line */
+        }
+      }
+    };
+    const record = (extra: { transportError?: string | null; httpStatus?: number }) => {
+      if (!isAnalyze) return;
+      if (lineBuffer.trim()) collect('\n');
+      void recordFixItCase({ events: seen, clip, bytes, startedMs, ...extra });
+    };
+
     try {
       const headers: Record<string, string> = {};
       const contentType = req.headers['content-type'];
@@ -61,18 +95,42 @@ export function attachFixItProxy(app: Express) {
 
       if (!upstream.body) {
         res.end();
+        record({ httpStatus: upstream.status });
         return;
       }
       const reader = upstream.body.getReader();
+      const decoder = new TextDecoder();
+      let errorBody = '';
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
         res.write(Buffer.from(value));
+        if (isAnalyze) {
+          const text = decoder.decode(value, { stream: true });
+          if (upstream.status === 200) collect(text);
+          else errorBody += text;
+        }
       }
       res.end();
+      if (upstream.status !== 200) {
+        let detail: string | null = null;
+        try {
+          const j = JSON.parse(errorBody) as { detail?: unknown; error?: unknown };
+          detail = String(j.detail || j.error || '') || null;
+        } catch {
+          /* not JSON */
+        }
+        record({ httpStatus: upstream.status, transportError: detail ? `HTTP ${upstream.status}: ${detail}` : null });
+      } else {
+        record({});
+      }
     } catch (err) {
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted) {
+        record({ transportError: 'Cancelled by the user before the diagnosis finished.' });
+        return;
+      }
       const message = err instanceof Error ? err.message : 'Fix-It backend unreachable';
+      record({ transportError: `Fix-It backend unreachable (${message}).` });
       if (!res.headersSent) {
         res.status(502).json({ error: `Fix-It backend unreachable (${message}).` });
       } else {

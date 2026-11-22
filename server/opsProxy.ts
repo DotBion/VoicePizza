@@ -24,6 +24,13 @@ const ROUTES: Array<{ method: 'GET' | 'POST'; pattern: RegExp }> = [
   { method: 'POST', pattern: new RegExp(`^runs/${ID}/(advance|frame|stop)$`) },
   { method: 'POST', pattern: new RegExp(`^runs/${ID}/tasks/${ID}/acknowledge$`) },
   { method: 'GET', pattern: new RegExp(`^runs/${ID}/events$`) },
+  // Stress Lab: past cases + overnight analysis (stored and scheduled on the ops backend).
+  { method: 'GET', pattern: /^cases$/ },
+  { method: 'POST', pattern: /^cases$/ },
+  { method: 'GET', pattern: new RegExp(`^cases/${ID}$`) },
+  { method: 'POST', pattern: new RegExp(`^cases/${ID}/replay$`) },
+  { method: 'GET', pattern: /^analysis\/latest$/ },
+  { method: 'POST', pattern: /^analysis\/run$/ },
 ];
 
 const FORWARD_REQUEST_HEADERS = ['content-type', 'content-length', 'range', 'last-event-id', 'accept'];

@@ -124,6 +124,7 @@ function openCheckout(url: string, preopened?: Window | null) {
 /** POST multipart to the proxy with upload progress and incremental NDJSON parsing. */
 function streamAnalyze(
   form: FormData,
+  clipLabel: string,
   onUploadProgress: (loaded: number, total: number) => void,
   onEvent: (ev: FixItEvent) => void,
 ): { promise: Promise<void>; abort: () => void } {
@@ -148,6 +149,8 @@ function streamAnalyze(
       }
     };
     xhr.open('POST', '/api/fixit/analyze');
+    // Name only (no media) so the diagnosis shows up as a Stress Lab past case.
+    xhr.setRequestHeader('X-Fixit-Clip', encodeURIComponent(clipLabel.slice(0, 120)));
     xhr.upload.onprogress = (e) => onUploadProgress(e.loaded, e.lengthComputable ? e.total : 0);
     xhr.onprogress = () => {
       if (xhr.status === 200) drain();
@@ -347,6 +350,7 @@ export function FixItCam() {
 
     const { promise, abort } = streamAnalyze(
       form,
+      clip.name,
       (loaded, total) => setUploadPct(total ? Math.round((100 * loaded) / total) : null),
       (ev) => {
         if (ev.event === 'stage') {
